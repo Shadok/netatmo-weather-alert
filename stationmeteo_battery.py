@@ -1,105 +1,60 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# Nom du Script:
-# stationmeteo_battery.py
-#
-# Description du script:
-# Script qui recupere le pourcentage des batteries
-# des modules de la station meteo Netatmo
-#
-# Version du Script:
-# V 1.0 du 30/01/2017
-#
-# Auteur original du script:
-# Seb iDomo 
-#
 
+import lnetatmo
 import requests
 import json
-#from lxml import etree
-#from pprint import pprint
 import sys
-from datetime import datetime
 import time
+from datetime import datetime
 
 # Mail
 import smtplib
-from email.MIMEMultipart import MIMEMultipart
-from email.MIMEText import MIMEText
-from email.Utils import formatdate
 import os
 
-def sendMail(subject, text):
-    msg = MIMEMultipart()
-    msg['From'] = "" # To fill
-    msg['To'] = "" # To fill
-    msg['Date'] = formatdate(localtime=True)
-    msg['Subject'] = subject
+def sendMail( subject, content ):
+    """ Send a simple, stupid, text, UTF-8 mail in Python """
 
-    msg.attach( MIMEText(text) )
+    for ill in [ "\n", "\r" ]:
+        subject = subject.replace(ill, ' ')
 
-    smtp = smtplib.SMTP( "localhost" )
-    smtp.sendmail(msg['From'], msg['To'], msg.as_string() )
-    smtp.close()
+    headers = {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': 'inline',
+        'Content-Transfer-Encoding': '8bit',
+        'From': '', # To fill
+        'To': '', # To fill
+        'Date': datetime.now().strftime('%a, %d %b %Y  %H:%M:%S %Z'),
+        'X-Mailer': 'python',
+        'Subject': subject
+    }
 
-# Debut du code fourni par Netatmo
-payload = {'grant_type': 'password',
-           'username': "", # To fill
-           'password': "", # To fill
-           'client_id':"", # To fill
-           'client_secret': "", # To fill
-           'scope': 'read_station'}
-try:
-    response = requests.post("https://api.netatmo.com/oauth2/token", data=payload)
-    response.raise_for_status()
-    access_token=response.json()["access_token"]
-    scope=response.json()["scope"]
-except requests.exceptions.HTTPError as error:
-    print(error.response.status_code, error.response.text)
+    # create the message
+    msg = ''
+    for key, value in headers.items():
+        msg += "%s: %s\n" % (key, value)
 
-params = {
-    'access_token': access_token,
-    'device_id': '<station mac address>' # To fill
-}
+    # add contents
+    msg += "\n%s\n"  % (content)
 
-batteries = {}
+    s = smtplib.SMTP("localhost")
 
-try:
-    response = requests.post("https://api.netatmo.com/api/getstationsdata", params = params)
-    response.raise_for_status()
-    data = response.json()["body"]
-# Fin du code fourni par Netatmo
-################################
+    s.sendmail(headers['From'], headers['To'], msg.encode("utf8"))
+    s.quit()
 
-    # Si la station est injoignable
-    ts = time.time()
-    ts_station = data[u'devices'][0][u'dashboard_data'][u'time_utc']
-    if (ts - ts_station) > 60*30:
-        sendMail("[Netatmo] Station non joignable","Inacessible depuis " + datetime.utcfromtimestamp(ts_station).strftime('%d-%m-%Y %H:%M:%S') + " UTC !")
+authorization = lnetatmo.ClientAuth()
+weather = lnetatmo.WeatherStationData(authorization)
 
-# Recuperation du pourcentage restant de la batterie des differents modules de la station
-    for mod in data[u'devices'][0][u'modules']:
-		assert(u'battery_percent' in mod)
-		percent = mod[u'battery_percent']
-		mod_name = mod[u'module_name'].encode('utf-8')
-		batteries[mod_name] = percent
-                if not mod[u'reachable']:
-                    sendMail("[Netatmo] Station " + mod_name + " injoignable !","Injoignable depuis " + datetime.utcfromtimestamp(mod[u'last_message']).strftime('%d-%m-%Y %H:%M:%S') + " UTC. Sa batterie etait a " + str( batteries[mod_name] ) + "%.")
-		elif batteries[mod_name] < 15:
-                    sendMail("[Netatmo] Remplacer les piles de la station " + mod_name,"Sa batterie est a " + str( batteries[mod_name] ) + "% !")
+user = weather.user
+station_id="# To fill" # To fill
 
-except requests.exceptions.HTTPError as error:
-    print(error.response.status_code, error.response.text)
-
-# Creation de la structure XML 
-#ext = etree.Element("Ext")
-#battery = etree.SubElement(ext, "Battery")
-
-#for mod_name in batteries:
-#	value = etree.SubElement(battery, mod_name)
-#	value.text = str(batteries[mod_name])
-
-#fichier = etree.ElementTree(ext)
-#fichier.write("stationmeteo_battery.xml")
-
+for station in weather.rawData :
+    if station['_id'] == station_id :
+        if not station['reachable']:
+            sendMail( "[Netatmo] Station " + station['home_name'] + " injoignable !", "Injoignable depuis " + datetime.utcfromtimestamp( station['last_status_store'] ).strftime('%d-%m-%Y %H:%M:%S') + " UTC." )
+        for module in station['modules'] :
+            if not module['reachable'] :
+                sendMail( "[Netatmo] Module " + module['module_name'] + " injoignable !", "Injoignable depuis " + datetime.utcfromtimestamp( module['last_message'] ).strftime('%d-%m-%Y %H:%M:%S') + " UTC. Sa batterie etait a " + str( module['battery_percent'] ) + " %." )
+            elif module['battery_percent'] < 10 :
+                sendMail( "[Netatmo] Remplacer les piles du module " + module['module_name'], "Sa batterie est a " + str( module['battery_percent'] ) + " % !" )
 sys.exit()
